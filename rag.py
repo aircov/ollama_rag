@@ -25,12 +25,14 @@ from langchain_community.vectorstores.faiss import DistanceStrategy
 from langchain_community.docstore import InMemoryDocstore
 from langchain_elasticsearch import ElasticsearchRetriever
 
+from config import EsUrl, EsIndexName, OllamaUrl, OllamaModelName
 from ollama_embeddings import OllamaEmbeddings
+from es.dsl import dsl
 
 
 class RAGPipeline:
     def __init__(self, model_name: str = "deepseek-r1:14b", max_memory_gb: float = 3.0):
-        self.ollama_url = "http://192.168.10.195:11434"
+        self.ollama_url = OllamaUrl
         self.setup_logging()
         self.check_system_memory(max_memory_gb)
         
@@ -49,14 +51,14 @@ class RAGPipeline:
         )
         
         # 配置 Elasticsearch 连接
-        self.es_url = "http://192.168.10.195:9200"
+        self.es_url = EsUrl
         self.es_client = Elasticsearch(self.es_url)
         if not self.es_client.ping():
             self.logger.error("无法连接到 Elasticsearch 实例")
         else:
             self.logger.info("成功连接到 Elasticsearch 实例")
         
-        self.es_index_name = "ollama_doc_index"
+        self.es_index_name = EsIndexName
         
         # Define the prompt template
         self.prompt = ChatPromptTemplate.from_template("""
@@ -143,57 +145,7 @@ class RAGPipeline:
     def create_es_retriever(self, documents: List[Document]) -> ElasticsearchRetriever:
         """创建Elasticsearch检索器"""
         
-        dsl = {
-            "settings": {
-                "number_of_shards": 1,
-                "number_of_replicas": 0,  # 单节点环境，无需复制，否则集群状态是黄色
-                "index": {
-                    "max_ngram_diff": 5
-                },
-                "analysis": {
-                    "analyzer": {
-                        
-                        "ngram_analyzer": {
-                            "tokenizer": "ngram_tokenizer",
-                            "filter": [
-                                "lowercase"
-                            ]
-                        }
-                    },
-                    "tokenizer": {
-                        "ngram_tokenizer": {
-                            "type": "ngram",
-                            "min_gram": 1,
-                            "max_gram": 5,
-                            "token_chars": [
-                                "letter",
-                                "digit"
-                            ]
-                        }
-                    }
-                }
-                
-            },
-            "mappings": {
-                "properties": {
-                    "content": {
-                        "type": "text",
-                        "fields": {
-                            "ngram": {
-                                "type": "text",
-                                "store": False,
-                                "analyzer": "ngram_analyzer"
-                            }
-                        },
-                        "analyzer": "standard"
-                    },
-                    "metadata": {
-                        "type": "object"
-                    }
-                }
-            }
-        }
-        self.es_client.indices.create(index=self.es_index_name, body=dsl, ignore=400)
+        self.es_client.indices.create(index=self.es_index_name, body=dsl["create_index"], ignore=400)
         
         # 将文档添加到 Elasticsearch 索引
         actions = [
@@ -217,7 +169,10 @@ class RAGPipeline:
             return {
                 "query": {
                     "match": {
-                        "content.ngram": query
+                        "content": {
+                            "query": query,
+                            "analyzer": "ik_max_word_synonym"
+                        }
                     }
                 },
                 "size": 20
@@ -355,7 +310,7 @@ class RAGPipeline:
 
 if __name__ == '__main__':
     
-    rag = RAGPipeline(model_name="deepseek-r1:14b", max_memory_gb=3.0)
+    rag = RAGPipeline(model_name=OllamaModelName, max_memory_gb=3.0)
     documents = rag.load_and_split_documents("./data/")
     vectorstore = rag.create_vectorstore(documents)
     es_retriever = rag.create_es_retriever(documents=documents)
