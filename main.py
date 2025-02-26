@@ -1,28 +1,10 @@
-# ollama_rag
+# -*- coding: utf-8 -*-
+# @Time    : 2025/2/20 10:40
+# @Author  : yaomw
+# @Desc    :
 
-## 环境准备
+import numpy as np
 
-### ollama
-官网
-https://ollama.com/download
-
-安装版本
-ollama version is 0.5.11
-
-deepseek-r1  14b
-
-
-### python
-
-虚拟环境
-workon ai_ollama
-
-安装依赖
-pip install langchain-core langchain-community langchain-ollama langchain-huggingface faiss-cpu psutil langchain-elasticsearch
-
-
-测试
-```python
 from ollama import Client
 
 client = Client(
@@ -30,8 +12,8 @@ client = Client(
     headers={'Content-Type': "application/json", "Authorization": "Bearer ollama"}
 )
 
-# 模型列表
-client.list()
+print(client.list())
+
 
 # embed
 resp = client.embed(
@@ -40,8 +22,6 @@ resp = client.embed(
 )
 print(resp.embeddings[0][:10])
 print("ollama deepseek embedding size:",len(resp.embeddings[0]))
-
-import numpy as np
 
 # 向量
 vec1 = np.array(resp.embeddings[0])
@@ -56,22 +36,16 @@ dot_product = np.dot(vec1, vec2)
 print(f"dot product Similarity: {dot_product}")
 
 
-# 流式回答
 stream = client.chat(
     model='deepseek-r1:14b',
     messages=[
         {"role": "system", "content": """You are a helpful assistant."""},
-        {'role': 'user', 'content': '解方程 (x²-5x+6=0)。'},
+        {'role': 'user', 'content': 'linux命令如何查看当前目录下每个文件夹的大小'},
     
     ],
     stream=True,
 )
 for chunk in stream:
     print(chunk['message']['content'], end='', flush=True)
-
-```
-
-### elasticsearch
-安装：`https://www.elastic.co/guide/en/elasticsearch/reference/current/install-elasticsearch.html`
-elasticsearch-8.17.1
-
+    
+    
