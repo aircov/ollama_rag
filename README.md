@@ -75,3 +75,7 @@ for chunk in stream:
 安装：`https://www.elastic.co/guide/en/elasticsearch/reference/current/install-elasticsearch.html`
 elasticsearch-8.17.1
 
+
+## 运行
+
+`python3 rag.py`
