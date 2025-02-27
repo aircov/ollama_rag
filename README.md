@@ -1,8 +1,8 @@
 # ollama_rag
 
-## 环境准备
+## 1、环境准备
 
-### ollama
+### 1.1、ollama
 官网
 https://ollama.com/download
 
@@ -12,13 +12,13 @@ ollama version is 0.5.11
 deepseek-r1  14b
 
 
-### python
+### 1.2、python
 
 虚拟环境
-workon ai_ollama
+`workon ai_ollama`
 
 安装依赖
-pip install langchain-core langchain-community langchain-ollama langchain-huggingface faiss-cpu psutil langchain-elasticsearch
+`pip install langchain-core langchain-community langchain-ollama langchain-huggingface faiss-cpu psutil langchain-elasticsearch`
 
 
 测试
@@ -71,11 +71,34 @@ for chunk in stream:
 
 ```
 
-### elasticsearch
-安装：`https://www.elastic.co/guide/en/elasticsearch/reference/current/install-elasticsearch.html`
-elasticsearch-8.17.1
+### 1.3、elasticsearch
+
+#### 安装
+
+官网：https://www.elastic.co/guide/en/elasticsearch/reference/current/install-elasticsearch.html
+
+版本：`elasticsearch-8.17.1`
+
+#### 启动
+linux：`./bin/elasticsearch`
+
+windows：`elasticsearch.bat`、`kibana.bat`
+
+#### 远程词库热更新
+![img.png](images/img_es_ik_dict_config.png)
+`python3 ik_remote_dict.py`
+
+![img.png](images/img_es_ik_reload.png)
 
 
-## 运行
+
+## 2、修改配置
+配置文件：`config/__init__.py`
+修改对应es、ollama的配置
+
+
+## 3、运行rag
 
 `python3 rag.py`
+
+![img.png](images/img_reg_demo.png)
