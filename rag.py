@@ -25,7 +25,7 @@ from langchain_community.vectorstores.faiss import DistanceStrategy
 from langchain_community.docstore import InMemoryDocstore
 from langchain_elasticsearch import ElasticsearchRetriever
 
-from config import EsUrl, EsIndexName, OllamaUrl, OllamaModelName
+from config import EsUrl, EsIndexName, OllamaUrl, OllamaModelName, EmbeddingDim
 from ollama_embeddings import OllamaEmbeddings
 from es.dsl import dsl
 
@@ -119,7 +119,7 @@ class RAGPipeline:
     
     def create_vectorstore(self, documents: List[Document]) -> FAISS:
         """创建带批处理的向量存储"""
-        dim = 5120
+        dim = EmbeddingDim
         
         # 创建使用内积（余弦相似度）的索引
         index = faiss.IndexFlatIP(dim)  # IP表示Inner Product
@@ -318,6 +318,7 @@ if __name__ == '__main__':
     chain = rag.setup_rag_chain(vectorstore, es_retriever)
     
     question = "神烔?"
+    question = "盗龄医生?"
     print(f"Question: {question}\nAnswer: ", end='', flush=True)
     for chunk in rag.query(chain, question):
         print(chunk, end="", flush=True)
