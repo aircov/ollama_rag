@@ -4,6 +4,8 @@
 # @Desc    : rag全流程
 
 import logging
+from pathlib import Path
+
 import psutil
 import faiss
 import hashlib
@@ -17,8 +19,8 @@ from langchain_core.runnables import RunnablePassthrough
 from langchain_core.runnables import RunnableLambda
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_community.document_loaders import TextLoader
-from langchain_community.document_loaders import DirectoryLoader, PyPDFLoader
-from langchain_text_splitters import RecursiveCharacterTextSplitter
+from langchain_community.document_loaders import DirectoryLoader, PyPDFLoader, UnstructuredPowerPointLoader
+from langchain_text_splitters import RecursiveCharacterTextSplitter, MarkdownHeaderTextSplitter, HTMLHeaderTextSplitter
 from langchain_ollama.llms import OllamaLLM
 from langchain_community.vectorstores import FAISS
 from langchain_community.vectorstores.faiss import DistanceStrategy
@@ -95,14 +97,55 @@ class RAGPipeline:
         data = []
         for filename in os.listdir(file_path):
             print(f"加载文件：{filename}")
+            # txt
             if filename.endswith(".txt"):
                 loader = TextLoader(f"{file_path}{filename}", encoding="utf-8")
                 documents = loader.load()
+                documents = self.normalize_source(documents, filename)
                 data.extend(documents)
+            
+            # pdf
             if filename.endswith(".pdf"):
                 loader = PyPDFLoader(f"{file_path}{filename}", extract_images=True)
                 documents = loader.load()
+                documents = self.normalize_source(documents, filename)
                 data.extend(documents)
+            
+            # Markdown文件处理
+            elif filename.endswith(".md"):
+                headers_to_split_on = [
+                    ("#", "H1"),
+                    ("##", "H2"),
+                    ("###", "H3"),
+                    ("####", "H4"),
+                    ("#####", "H5"),
+                ]
+                markdown_splitter = MarkdownHeaderTextSplitter(
+                    headers_to_split_on=headers_to_split_on,
+                    return_each_line=False,
+                    strip_headers=True  # 去除标题中的HTML标签
+                )
+                text = Path(f"{file_path}{filename}").read_text(encoding="utf-8")
+                splits = markdown_splitter.split_text(text)
+                
+                splits = self.normalize_source(splits, filename)
+                data.extend(splits)
+            
+            # HTML文件处理
+            elif filename.endswith(".html"):
+                headers_to_split_on = [
+                    ("h1", "H1"),
+                    ("h2", "H2"),
+                    ("h3", "H3"),
+                    ("h4", "H4"),
+                    ("h5", "H5"),
+                ]
+                html_splitter = HTMLHeaderTextSplitter(
+                    headers_to_split_on=headers_to_split_on
+                )
+                splits = html_splitter.split_text_from_file(file_path)
+                splits = self.normalize_source(splits, filename)
+                data.extend(splits)
         
         # self.logger.info(f"加载数据格式样例：{data[0]}")
         
@@ -116,6 +159,12 @@ class RAGPipeline:
         self.logger.info(f"split doc:{splits[-1]}")
         self.logger.info(f"Created {len(splits)} document chunks")
         return splits
+    
+    def normalize_source(self, docs: List[Document], filename: str) -> List[Document]:
+        """统一source字段为纯文件名"""
+        for doc in docs:
+            doc.metadata["source"] = filename
+        return docs
     
     def create_vectorstore(self, documents: List[Document]) -> FAISS:
         """创建带批处理的向量存储"""
