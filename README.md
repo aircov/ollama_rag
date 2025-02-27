@@ -70,6 +70,8 @@ for chunk in stream:
     print(chunk['message']['content'], end='', flush=True)
 
 ```
+正确输出：
+![img.png](images/img_main_result.png)
 
 ### 1.3、elasticsearch
 

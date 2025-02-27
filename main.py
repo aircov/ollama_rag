@@ -40,7 +40,7 @@ stream = client.chat(
     model='deepseek-r1:14b',
     messages=[
         {"role": "system", "content": """You are a helpful assistant."""},
-        {'role': 'user', 'content': 'linux命令如何查看当前目录下每个文件夹的大小'},
+        {'role': 'user', 'content': '解方程 (x²-5x+6=0)。'},
     
     ],
     stream=True,
