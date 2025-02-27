@@ -7,8 +7,20 @@
 https://ollama.com/download
 
 安装版本
+```text
+(ai_ollama) bigdata@bigdata-pc:~/work/es8.17/elasticsearch-8.17.1$ ollama --version
+ollama version is 0.5.11
+```
 ollama version is 0.5.11
 
+模型列表
+```text
+(ai_ollama) bigdata@bigdata-pc:~/work/es8.17/elasticsearch-8.17.1$ ollama list
+NAME                       ID              SIZE      MODIFIED   
+deepseek-r1:14b            ea35dfe18182    9.0 GB    5 days ago    
+nomic-embed-text:latest    0a109f422b47    274 MB    6 days ago    
+deepseek-r1:7b             0a8c26691023    4.7 GB    7 days ago
+```
 deepseek-r1  14b
 
 
