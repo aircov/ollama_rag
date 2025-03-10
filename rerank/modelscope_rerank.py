@@ -1,15 +1,16 @@
 # -*- coding: utf-8 -*-
 # @Time    : 2025/2/28 17:32
 # @Author  : yaomw
-# @Desc    : CoROM语义相关性-中文-电商领域-base
+# @Desc    : CoROM语义相关性-中文
 # https://modelscope.cn/models/iic/nlp_corom_passage-ranking_chinese-base-ecom
+# https://modelscope.cn/models/iic/nlp_rom_passage-ranking_chinese-base
 
 
 from modelscope.pipelines import pipeline
 from modelscope.utils.constant import Tasks
 
 # 语义相关性排序
-model_id_rerank = 'damo/nlp_corom_passage-ranking_chinese-base-ecom'
+model_id_rerank = 'damo/nlp_rom_passage-ranking_chinese-base'
 pipeline_se_rerank = pipeline(
     Tasks.text_ranking,
     model=model_id_rerank,

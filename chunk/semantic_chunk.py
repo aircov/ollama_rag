@@ -39,7 +39,6 @@ if __name__ == "__main__":
         model_name='damo/nlp_corom_sentence-embedding_chinese-base',  # 推荐专用嵌入模型
         device='cpu'  # 可改为 'cuda:0' 使用 GPU
     )
-    embed_model.test_embedding_variance()
     
     # 加载并处理PDF
     raw_text = load_pdf_content("../data/集团介绍.pdf")
