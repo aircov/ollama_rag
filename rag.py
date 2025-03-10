@@ -19,7 +19,7 @@ from langchain_core.runnables import RunnablePassthrough
 from langchain_core.runnables import RunnableLambda
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_community.document_loaders import TextLoader
-from langchain_community.document_loaders import DirectoryLoader, PyPDFLoader, UnstructuredPowerPointLoader
+from langchain_community.document_loaders import PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter, MarkdownHeaderTextSplitter, HTMLHeaderTextSplitter
 from langchain_ollama.llms import OllamaLLM
 from langchain_community.vectorstores import FAISS
@@ -28,7 +28,7 @@ from langchain_community.docstore import InMemoryDocstore
 from langchain_elasticsearch import ElasticsearchRetriever
 
 from config import EsUrl, EsIndexName, OllamaUrl, OllamaModelName, EmbeddingDim
-from ollama_embeddings import OllamaEmbeddings
+from embed.ollama_embeddings import OllamaEmbeddings
 from es.dsl import dsl
 
 
