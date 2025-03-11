@@ -11,5 +11,5 @@ print(result)
 
 from googlesearch import search
 
-results = search("盗龄医生", 10)
+results = search("盗龄医生", 10, advanced=True)
 print([i for i in results])
