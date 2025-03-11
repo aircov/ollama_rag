@@ -37,6 +37,7 @@ class ModelScopeEmbeddings(Embeddings):
     def test_embedding_variance(self):
         test_texts = ["这是第一段", "这是完全不同的第二段内容"]
         embeddings = self.embed_documents(test_texts)
+        print(f"测试文本嵌入维度：{len(embeddings[0])}")
         similarity = np.dot(embeddings[0], embeddings[1])
         print(f"测试文本相似度：{similarity:.4f}")
 

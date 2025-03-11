@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
 # @Time    : 2025/2/25 15:17
 # @Author  : yaomw
-# @Desc    :
+# @Desc    : deepseek模型嵌入
+# DeepSeek R1 具有出色的推理能力，但它并不适合生成嵌入！！！https://mp.weixin.qq.com/s/QtXqrmKNyB3R-H8OIAxkqA
 from typing import List
 
 import numpy as np

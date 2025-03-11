@@ -29,6 +29,7 @@ from langchain_elasticsearch import ElasticsearchRetriever
 
 from config import EsUrl, EsIndexName, OllamaUrl, OllamaModelName, EmbeddingDim
 from embed.ollama_embeddings import OllamaEmbeddings
+from embed.modelscope_embeddings import ModelScopeEmbeddings
 from es.dsl import dsl
 
 
@@ -47,10 +48,11 @@ class RAGPipeline:
         )
         
         # 使用自定义的本地嵌入模型
-        self.embeddings = OllamaEmbeddings(
-            base_url=self.ollama_url,
-            model=model_name  # 使用同一个模型
-        )
+        # self.embeddings = OllamaEmbeddings(
+        #     base_url=self.ollama_url,
+        #     model=model_name  # 使用同一个模型
+        # )
+        self.embeddings = ModelScopeEmbeddings()
         
         # 配置 Elasticsearch 连接
         self.es_url = EsUrl
@@ -61,15 +63,6 @@ class RAGPipeline:
             self.logger.info("成功连接到 Elasticsearch 实例")
         
         self.es_index_name = EsIndexName
-        
-        # Define the prompt template
-        self.prompt = ChatPromptTemplate.from_template("""
-        Answer the question based only on the following context. Be concise.
-        If you cannot find the answer in the context, say "I cannot answer this based on the provided context."
-
-        Context: {context}
-        Question: {question}
-        Answer: """)
         
         # 中文版prompt
         self.prompt = ChatPromptTemplate.from_template("""
@@ -179,7 +172,7 @@ class RAGPipeline:
             docstore=InMemoryDocstore(),
             index_to_docstore_id={},
             distance_strategy=DistanceStrategy.MAX_INNER_PRODUCT,
-            normalize_L2=False
+            normalize_L2=True
         )
         
         batch_size = 8
@@ -275,6 +268,13 @@ class RAGPipeline:
         reranked_docs = sorted(reranked_docs, key=lambda x: x[1], reverse=True)
         
         return reranked_docs
+    
+    def rerank_documents_by_damo(self, vector_search_docs: list, es_search_docs: list) -> list:
+        """重排，使用魔塔模型"""
+        
+        pass
+    
+    
     
     def setup_rag_chain(self, vectorstore: FAISS, es_retriever: ElasticsearchRetriever):
         # 构建rag链

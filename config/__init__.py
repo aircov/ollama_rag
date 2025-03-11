@@ -6,4 +6,4 @@ EsUrl = "http://192.168.10.195:9200"
 EsIndexName = "ollama_doc_index"
 OllamaUrl = "http://192.168.10.195:11434"
 OllamaModelName = "deepseek-r1:14b"
-EmbeddingDim = 5120  # 模型输出向量维度，不同模型的向量维度不同，需要根据实际情况修改
+EmbeddingDim = 768  # 模型输出向量维度，不同模型的向量维度不同，需要根据实际情况修改
