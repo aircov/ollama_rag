@@ -8,7 +8,7 @@ from langchain.schema import Document
 from typing import List
 import re
 
-from embed.modelscope_embeddings import ModelScopeEmbeddings
+from embed.corom_embeddings import CoROMEmbeddings
 
 
 def load_pdf_content(pdf_path: str) -> str:
@@ -27,7 +27,7 @@ def semantic_chunk(text: str, embed_model) -> List[Document]:
     chunker = SemanticChunker(
         embed_model,
         breakpoint_threshold_type="percentile",
-        breakpoint_threshold_amount=0.92  # 根据模型特性调整
+        breakpoint_threshold_amount=0.2  # 根据模型特性调整
     )
     return chunker.create_documents([text])
 
@@ -35,7 +35,7 @@ def semantic_chunk(text: str, embed_model) -> List[Document]:
 
 if __name__ == "__main__":
 
-    embed_model = ModelScopeEmbeddings(
+    embed_model = CoROMEmbeddings(
         model_name='damo/nlp_corom_sentence-embedding_chinese-base',  # 推荐专用嵌入模型
         device='cpu'  # 可改为 'cuda:0' 使用 GPU
     )

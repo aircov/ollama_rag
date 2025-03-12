@@ -9,7 +9,7 @@ from modelscope.utils.constant import Tasks
 from typing import List
 
 
-class ModelScopeEmbeddings(Embeddings):
+class CoROMEmbeddings(Embeddings):
     def __init__(self, model_name="damo/nlp_corom_sentence-embedding_chinese-base", device='gpu'):
         self.pipeline = pipeline(
             task=Tasks.sentence_embedding,
@@ -43,7 +43,7 @@ class ModelScopeEmbeddings(Embeddings):
 
 
 if __name__ == '__main__':
-    embeddings = ModelScopeEmbeddings()
+    embeddings = CoROMEmbeddings()
     print(embeddings.embed_documents(["你好"]))
     
     embeddings.test_embedding_variance()

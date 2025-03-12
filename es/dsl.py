@@ -73,6 +73,17 @@ dsl = {
                 },
                 "metadata": {
                     "type": "object"
+                },
+                "embedding": {
+                    "type": "dense_vector",
+                    "dims": 768,
+                    "index": True,
+                    "similarity": "cosine",
+                    "index_options": {  # HNSW 参数配置（关键修正点！）
+                        "type": "hnsw",
+                        "m": 16,  # 每个节点的最大连接数
+                        "ef_construction": 128  # 索引构建时的候选队列大小
+                    }
                 }
             }
         }
