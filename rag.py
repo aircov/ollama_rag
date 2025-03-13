@@ -4,10 +4,10 @@
 # @Desc    : rag全流程
 
 import logging
+from datetime import datetime
 from pathlib import Path
 
 import psutil
-import faiss
 import hashlib
 import os
 from typing import List
@@ -22,15 +22,14 @@ from langchain_community.document_loaders import TextLoader
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter, MarkdownHeaderTextSplitter, HTMLHeaderTextSplitter
 from langchain_ollama.llms import OllamaLLM
-from langchain_community.vectorstores import FAISS
-from langchain_community.vectorstores.faiss import DistanceStrategy
-from langchain_community.docstore import InMemoryDocstore
 from langchain_elasticsearch import ElasticsearchRetriever
 
 from config import EsUrl, EsIndexName, OllamaUrl, OllamaModelName, EmbeddingDim
 from embed.corom_embeddings import CoROMEmbeddings
 from es.dsl import dsl
+from recall.web_search import google_search
 from rerank.corom_rerank import CoROMRerank
+from utils.utils import get_file_list
 
 
 class RAGPipeline:
@@ -64,8 +63,9 @@ class RAGPipeline:
         
         # 中文版prompt
         self.prompt = ChatPromptTemplate.from_template("""
-        请根据以下上下文详细且有条理地回答用户的问题。如果在提供的信息中找不到答案，或者提供的上下文与问题不相关，请基于你的知识库生成合理的答案，
-        确保答案逻辑清晰且符合常识，此时不需要结合上下文判断，直接回答用户基础问题即可。
+        请根据以下上下文，结合大语言模型的知识储备，详细且有条理地回答用户的问题。
+        如果在提供的信息中找不到答案，或者提供的上下文与问题不相关，请基于你的知识库生成合理的答案，确保答案逻辑清晰且符合常识，此时不需要结合上下文判断，直接回答用户基础问题即可。
+        当前时间是：{current_time}
 
         使用中文回答，并保持语言简洁、易懂。
 
@@ -83,10 +83,18 @@ class RAGPipeline:
         if available_memory < max_memory_gb:
             self.logger.warning("Memory is below recommended threshold.")
     
-    def load_and_split_documents(self, file_path: str) -> List[Document]:
+    def load_and_split_documents(self, file_path="", files=None):
         """拆分文档片段"""
         data = []
-        for filename in os.listdir(file_path):
+        
+        if file_path:
+            file_names = os.listdir(file_path)
+        
+        if files:
+            file_names = [os.path.basename(i) for i in files]
+            file_path = os.path.dirname(files[0]) + "/"
+        
+        for filename in file_names:
             print(f"加载文件：{filename}")
             # txt
             if filename.endswith(".txt"):
@@ -148,9 +156,17 @@ class RAGPipeline:
             separators=["\n\n", "\n", "。", "，", "；", "：", " ", ""]  # 按自然语言结构分割
         )
         splits = text_splitter.split_documents(data)
-        self.logger.info(f"split doc:{splits[-1]}")
         self.logger.info(f"Created {len(splits)} document chunks")
-        return splits
+        
+        # 添加索引
+        self.update_es_index(documents=splits)
+        
+        # 获取更新后的文件列表
+        file_list = get_file_list(self.es_client, self.es_index_name)
+        
+        self.logger.info(f"已索引文件列表：{file_list}")
+        
+        return file_list
     
     def normalize_source(self, docs: List[Document], filename: str) -> List[Document]:
         """统一source字段为纯文件名"""
@@ -158,33 +174,8 @@ class RAGPipeline:
             doc.metadata["source"] = filename
         return docs
     
-    def create_vectorstore(self, documents: List[Document]) -> FAISS:
-        """创建带批处理的向量存储"""
-        dim = EmbeddingDim
-        
-        # 创建使用内积（余弦相似度）的索引
-        index = faiss.IndexFlatIP(dim)  # IP表示Inner Product
-        # 初始化FAISS时指定度量方式
-        vectorstore = FAISS(
-            embedding_function=self.embeddings,
-            index=index,
-            docstore=InMemoryDocstore(),
-            index_to_docstore_id={},
-            distance_strategy=DistanceStrategy.MAX_INNER_PRODUCT,
-            normalize_L2=True
-        )
-        
-        batch_size = 8
-        for i in range(0, len(documents), batch_size):
-            batch = documents[i:i + batch_size]
-            vectorstore.add_documents(batch)
-            self.logger.info(f"Added batch {i // batch_size + 1}")
-        
-        self.logger.info(f"向量数据库构建完成！！")
-        return vectorstore
-    
-    def create_es_retriever(self, documents: List[Document]) -> ElasticsearchRetriever:
-        """创建Elasticsearch检索器"""
+    def update_es_index(self, documents: List[Document]):
+        """数据插入es"""
         
         self.es_client.indices.create(index=self.es_index_name, body=dsl["create_index"], ignore=400)
         
@@ -205,6 +196,9 @@ class RAGPipeline:
         self.es_client.indices.refresh(index=self.es_index_name)
         result = self.es_client.count(index=self.es_index_name)
         self.logger.info(f"ES索引 {self.es_index_name} 中有 {result['count']} 条记录")
+    
+    def get_es_retriever(self):
+        """获取Elasticsearch检索器"""
         
         def default_body_func(query: str) -> dict:
             # 定义 body_func：生成 Elasticsearch 查询体
@@ -238,23 +232,51 @@ class RAGPipeline:
         
         return retriever
     
-    def setup_rag_chain(self, es_retriever: ElasticsearchRetriever):
+    def setup_rag_chain(self, rerank_method="corom", enable_web_search=False):
         # 构建rag链
         
+        es_retriever = self.get_es_retriever()
+        
         def combined_retriever(question: str) -> list:
-            # es 文本检索 + 向量检索
-            es_search_docs = es_retriever.invoke(question)
-            # self.logger.info(f"es 搜索：{es_search_docs}")
+            # 如果启用网页搜索，则完全跳过 ES 检索
+            if enable_web_search:
+                # 启用网页搜索
+                try:
+                    self.logger.info(f"开始Google搜索：{question}")
+                    online_search_results = google_search(question, 20)
+                    
+                    web_search_docs = [
+                        Document(
+                            page_content=result["description"],  # 使用 description 作为内容
+                            metadata={
+                                "source": result["url"],
+                                "title": result["title"],
+                                "rerank_score": 0.0  # 初始化重排分数
+                            }
+                        ) for result in online_search_results
+                    ]
+                    self.logger.info(f"网页搜索数据：{len(web_search_docs)}条")
+                    
+                    return self.rerank_results(question, web_search_docs, method="", top_k=5)
+                
+                except Exception as e:
+                    self.logger.error(f"Google搜索发生错误：{e}")
+                    return []
             
-            # 重新排序
-            rerank_docs = self.rerank_results(question, es_search_docs, method="corom", top_k=5)
-            
-            print("\n=== 多路召回再重排 ===")
-            for i, doc in enumerate(rerank_docs, 1):
-                print(
-                    f"【文档{i} | {doc.metadata.get('source', '')} | rerank得分: {doc.metadata.get('rerank_score',0):.4f}】\n{doc}\n{'-' * 50}")
-            
-            return rerank_docs
+            else:
+                # es 文本检索 + 向量检索
+                es_search_docs = es_retriever.invoke(question)
+                self.logger.info(f"es 搜索数据：{len(es_search_docs)}条")
+                
+                # 重新排序
+                rerank_docs = self.rerank_results(question, es_search_docs, method=rerank_method, top_k=5)
+                
+                print("\n=== 多路召回再重排 ===")
+                for i, doc in enumerate(rerank_docs, 1):
+                    print(
+                        f"【文档{i} | {doc.metadata.get('source', '')} | rerank得分: {doc.metadata.get('rerank_score', 0):.4f}】\n{doc}\n{'-' * 50}")
+                
+                return rerank_docs
         
         printable_retriever = RunnableLambda(combined_retriever)
         
@@ -266,7 +288,8 @@ class RAGPipeline:
             # 步骤1：组装输入数据
                 {
                     "context": printable_retriever | format_docs,  # 先检索文档再格式化
-                    "question": RunnablePassthrough()  # 直接传递原始问题
+                    "question": RunnablePassthrough(),  # 直接传递原始问题
+                    "current_time": RunnableLambda(lambda _: datetime.now().strftime("%Y年%m月%d日 %H:%M:%S")),
                 }
                 # 步骤2：组合提示词
                 | self.prompt
@@ -313,7 +336,7 @@ class RAGPipeline:
         ret = sorted(es_search_docs, key=lambda x: x.metadata.get("rerank_score"), reverse=True)
         
         ret = [doc for doc in ret if doc.metadata.get("rerank_score", 0) >= 0.1][:top_k]
-        
+        self.logger.info(f"重排后数据：{len(ret)}条")
         return ret
     
     def rerank_documents_with_llm(self, question, docs, top_k):
@@ -348,10 +371,18 @@ class RAGPipeline:
             if len(llm_score) != len(content_list):
                 self.logger.error(f"LLM 评分长度不匹配：{len(llm_score)} != {len(content_list)}")
                 return docs[:top_k]
+            else:
+                self.logger.info(f"LLM 评分数量匹配：llm_score：{len(llm_score)} == content_list：{len(content_list)}")
+            
+            # 按照大模型打分重新排序
             for idx, score in enumerate(llm_score):
                 docs[idx].metadata["rerank_score"] = score
             
-            return sorted(docs, key=lambda x: x.metadata.get("rerank_score"), reverse=True)[:top_k]
+            ret = sorted(docs, key=lambda x: x.metadata.get("rerank_score"), reverse=True)
+            
+            ret = [doc for doc in ret if doc.metadata.get("rerank_score", 0) >= 3][:top_k]
+            self.logger.info(f"剔除LLM评分小于3的文档，剩余文档数量：{len(ret)}")
+            return ret
         
         except Exception as e:
             self.logger.error(f"llm rerank Error: {e}")
@@ -361,10 +392,9 @@ class RAGPipeline:
 if __name__ == '__main__':
     
     rag = RAGPipeline(model_name=OllamaModelName, max_memory_gb=3.0)
-    documents = rag.load_and_split_documents("./data/")
-    es_retriever = rag.create_es_retriever(documents=documents)
+    filenames = rag.load_and_split_documents("./data/")
     
-    chain = rag.setup_rag_chain(es_retriever)
+    chain = rag.setup_rag_chain("corom", enable_web_search=True)
     
     while True:
         question = input("请输入问题：")

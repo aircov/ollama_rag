@@ -11,9 +11,9 @@ client = Client(
     host='http://192.168.10.195:11434',
     headers={'Content-Type': "application/json", "Authorization": "Bearer ollama"}
 )
-
-print(client.list())
-
+models = client.list()
+print(models)
+print([model.model for model in models.models])
 
 # embed
 resp = client.embed(
