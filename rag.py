@@ -64,7 +64,10 @@ class RAGPipeline:
         # 中文版prompt
         self.prompt = ChatPromptTemplate.from_template("""
         请根据以下上下文，结合大语言模型的知识储备，详细且有条理地回答用户的问题。
-        如果在提供的信息中找不到答案，或者提供的上下文与问题不相关，请基于你的知识库生成合理的答案，确保答案逻辑清晰且符合常识，此时不需要结合上下文判断，直接回答用户基础问题即可。
+        
+        如果在提供的信息中找不到答案，或者提供的上下文与问题不相关，请基于你的知识库生成合理的答案，确保答案逻辑清晰且符合常识，
+        此时不需要结合上下文判断，直接回答用户基础问题即可。不要回答上下文的内容。
+        
         当前时间是：{current_time}
 
         使用中文回答，并保持语言简洁、易懂。
@@ -97,7 +100,7 @@ class RAGPipeline:
         for filename in file_names:
             print(f"加载文件：{filename}")
             # txt
-            if filename.endswith(".txt"):
+            if filename.endswith(".txt") or filename.endswith(".doc") or filename.endswith(".docx"):
                 loader = TextLoader(f"{file_path}{filename}", encoding="utf-8")
                 documents = loader.load()
                 documents = self.normalize_source(documents, filename)
@@ -202,6 +205,7 @@ class RAGPipeline:
         
         def default_body_func(query: str) -> dict:
             # 定义 body_func：生成 Elasticsearch 查询体
+            # 线性加权，也可以使用倒序排序融合rrf
             return {
                 "_source": ["content", "metadata"],
                 "query": {
@@ -335,7 +339,7 @@ class RAGPipeline:
         # 重新排序
         ret = sorted(es_search_docs, key=lambda x: x.metadata.get("rerank_score"), reverse=True)
         
-        ret = [doc for doc in ret if doc.metadata.get("rerank_score", 0) >= 0.1][:top_k]
+        ret = [doc for doc in ret if doc.metadata.get("rerank_score", 0) >= 0.3][:top_k]
         self.logger.info(f"重排后数据：{len(ret)}条")
         return ret
     
@@ -392,7 +396,7 @@ class RAGPipeline:
 if __name__ == '__main__':
     
     rag = RAGPipeline(model_name=OllamaModelName, max_memory_gb=3.0)
-    filenames = rag.load_and_split_documents("./data/")
+    rag.load_and_split_documents("./data/")
     
     chain = rag.setup_rag_chain("corom", enable_web_search=True)
     
@@ -403,6 +407,7 @@ if __name__ == '__main__':
         
         # question = "神烔?"
         # question = "盗龄医生?"
+        # question = "解方程 (x²-5x+6=0)。"
         print(f"Question: {question}\nAnswer: ", end='', flush=True)
         for chunk in rag.query(chain, question):
             print(chunk, end="", flush=True)

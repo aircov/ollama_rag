@@ -2,32 +2,26 @@
 # @Time    : 2025/3/13 15:05
 # @Author  : yaomw
 # @Desc    :
+import time
 
 import gradio as gr
 
 from rag import RAGPipeline
 from utils.ollama_utils import fetch_ollama_models
+from utils.utils import get_file_list
 
 rag = RAGPipeline()
 
 
-# 新增函数：获取系统使用的模型信息
-def get_system_models_info():
-    """返回系统使用的各种模型信息"""
-    models_info = {
-        "嵌入模型": "all-MiniLM-L6-v2",
-        "分块方法": "RecursiveCharacterTextSplitter (chunk_size=800, overlap=150)",
-        "检索方法": "向量检索 + BM25混合检索 (α=0.7)",
-        "重排序模型": "交叉编码器 (sentence-transformers/distiluse-base-multilingual-cased-v2)",
-        "生成模型": "deepseek-r1 (7B/1.5B)",
-        "分词工具": "jieba (中文分词)"
-    }
-    return models_info
-
-
 def process_upload_files(files):
     if not files:
-        return "请选择要上传的文件", []
+        # 获取es中的文件列表
+        file_list = get_file_list(rag.es_client, rag.es_index_name)
+        
+        # 已处理文件
+        ret = [f"文件名: 《{i['key']}》，分块数量：{i['doc_count']}" for i in file_list]
+        return "请选择要上传的文件", "\n".join(ret)
+    
     file_list = rag.load_and_split_documents(files=files)
     
     summary = f"\n总计处理 {len(files)} 个文件，处理完成"
@@ -37,16 +31,64 @@ def process_upload_files(files):
     
     return summary, "\n".join(ret)
 
+
 def process_chat(question, history, enable_web_search, model_choice):
-    if history is None:
-        history = []
-    if not question:
-        return "请输入问题", history
+    # 初始化历史记录
+    
+    print(
+        f"\nrag问答参数:\n question:{question}, history:{history}, 联网搜索:{enable_web_search}, 模型选择:{model_choice}")
+    history = history or []
+    
+    if not question.strip():
+        print("请输入问题")
+        yield history
+        return
     
     # 添加用户问题到历史
     history.append((question, ""))
     
-    rag.setup_rag_chain(rerank_method="corom", enable_web_search=enable_web_search, model_name=model_choice)
+    # 立即清空输入框并显示用户问题
+    yield history, ""
+    
+    chain = rag.setup_rag_chain(rerank_method="corom", enable_web_search=enable_web_search)
+    
+    # 初始化答案
+    full_answer = ""
+    
+    thinking_mode = False  # 是否处于思考过程
+    
+    think_time = time.time()
+    
+    # 流式获取回答
+    for chunk in chain.stream(question):
+        full_answer += chunk
+        
+        # 检测思考过程开始，确保只触发一次
+        if "<think>" in full_answer and not thinking_mode:
+            thinking_mode = True
+            # 用 <details open> 和 <summary>思考中...</summary> 替换 <think>
+            full_answer = full_answer.replace(
+                "<think>",
+                "<details open>\n<summary>思考中...</summary>\n"
+            )
+        
+        # 如果在思考过程中，检查是否到达结束标记
+        if thinking_mode and "</think>" in full_answer:
+            # 将 </think> 替换为 </details> 并更新 summary 文本
+            full_answer = full_answer.replace("</think>",
+                                              f"\n</details>\n\n ----------思考耗时:{(time.time() - think_time):.2f}s----------")
+            full_answer = full_answer.replace("思考中...", "思考完成")
+            thinking_mode = False
+        
+        # 更新最后一条历史记录
+        history[-1] = (question, full_answer)
+        # time.sleep(0.02)
+        # 逐步返回更新后的对话状态
+        yield history, ""
+
+
+def clear_chat_history():
+    return None, "对话已清空"
 
 
 with gr.Blocks() as demo:
@@ -100,8 +142,7 @@ with gr.Blocks() as demo:
                                 choices=fetch_ollama_models(),
                                 value="deepseek-r1:14b",
                                 label="模型选择",
-                                info="选择使用的本地模型",
-                                interactive=True
+                                info="选择使用本地模型或云端模型"
                             )
                         
                         with gr.Row():
@@ -123,57 +164,17 @@ with gr.Blocks() as demo:
                     
                     status_display = gr.HTML("", elem_id="status-display")
                     gr.Markdown("""
-                                <div class="footer-note">
-                                    *回答生成可能需要1-2分钟，请耐心等待<br>
-                                    *支持多轮对话，可基于前文继续提问
-                                </div>
-                                """)
-        
-        # 第二个选项卡：分块可视化
-        with gr.TabItem("📊 分块可视化"):
-            with gr.Row():
-                with gr.Column(scale=1):
-                    gr.Markdown("## 💡 系统模型信息")
-                    
-                    # 显示系统模型信息卡片
-                    models_info = get_system_models_info()
-                    with gr.Group(elem_classes="model-card"):
-                        gr.Markdown("### 核心模型与技术")
-                        
-                        for key, value in models_info.items():
-                            with gr.Row():
-                                gr.Markdown(f"**{key}**:", elem_classes="label")
-                                gr.Markdown(f"{value}", elem_classes="value")
-                
-                with gr.Column(scale=2):
-                    gr.Markdown("## 📄 文档分块统计")
-                    refresh_chunks_btn = gr.Button("🔄 刷新分块数据", variant="primary")
-                    chunks_status = gr.Markdown("点击按钮查看分块统计")
-            
-            # 分块数据表格和详情
-            with gr.Row():
-                chunks_data = gr.Dataframe(
-                    headers=["来源", "序号", "字符数", "分词数", "内容预览"],
-                    elem_classes="chunk-table",
-                    interactive=False,
-                    wrap=True,
-                    row_count=(10, "dynamic")
-                )
-            
-            with gr.Row():
-                chunk_detail_text = gr.Textbox(
-                    label="分块详情",
-                    placeholder="点击表格中的行查看完整内容...",
-                    lines=8,
-                    elem_classes="chunk-detail-box"
-                )
+                    <div class="footer-note">
+                        *回答生成可能需要1-2分钟，请耐心等待<br>
+                        *支持多轮对话，可基于前文继续提问
+                    </div>
+                    """)
     
     # 绑定UI事件
     upload_btn.click(
         process_upload_files,
         inputs=[file_input],
-        outputs=[upload_status, file_list],
-        show_progress=True
+        outputs=[upload_status, file_list]
     )
     
     # 绑定提问按钮
@@ -182,6 +183,13 @@ with gr.Blocks() as demo:
         inputs=[question_input, chatbot, web_search_checkbox, model_choice],
         outputs=[chatbot, question_input]
     )
+    
+    # 绑定清空按钮
+    clear_btn.click(
+        clear_chat_history,
+        inputs=[],
+        outputs=[chatbot, status_display]
+    )
 
 if __name__ == "__main__":
-    demo.launch()
+    demo.launch(server_name="0.0.0.0", server_port=7860)
