@@ -116,3 +116,8 @@ windows：`elasticsearch.bat`、`kibana.bat`
 `python3 rag.py`
 
 ![img.png](images/img_reg_demo.png)
+
+## 4、gradio界面
+
+`python3 gradio_demo.py`
+![img.png](images/img_gradio_demo1.png)
