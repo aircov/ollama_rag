@@ -10,7 +10,9 @@ from rag import RAGPipeline
 from utils.ollama_utils import fetch_ollama_models
 from utils.utils import get_file_list
 
-rag = RAGPipeline()
+from config import OllamaModelName
+
+rag = RAGPipeline(OllamaModelName)
 
 
 def process_upload_files(files):
