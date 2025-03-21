@@ -14,6 +14,16 @@ from config import OllamaModelName
 
 rag = RAGPipeline(OllamaModelName)
 
+# 定义全局停止标志变量
+stop_flag = False
+
+
+def stop_chat():
+    global stop_flag
+    stop_flag = True
+    # 此处可以返回一个状态信息供界面显示，也可以不返回
+    return "回答已中断"
+
 
 def process_upload_files(files):
     if not files:
@@ -39,6 +49,10 @@ def process_chat(question, history, enable_web_search, model_choice):
     
     print(
         f"\nrag问答参数:\n question:{question}, history:{history}, 联网搜索:{enable_web_search}, 模型选择:{model_choice}")
+    
+    global stop_flag
+    stop_flag = False  # 重置停止标志，每次生成前确保为 False
+    
     history = history or []
     
     if not question.strip():
@@ -63,6 +77,15 @@ def process_chat(question, history, enable_web_search, model_choice):
     
     # 流式获取回答
     for chunk in chain.stream(question):
+        
+        print(chunk, end="", flush=True)
+        
+        if stop_flag:  # 检查是否点击了停止按钮
+            full_answer += "\n\n回答已中断"
+            history[-1] = (question, full_answer)
+            yield history, ""
+            return  # 中断后直接结束
+        
         full_answer += chunk
         
         # 检测思考过程开始，确保只触发一次
@@ -87,6 +110,9 @@ def process_chat(question, history, enable_web_search, model_choice):
         # time.sleep(0.02)
         # 逐步返回更新后的对话状态
         yield history, ""
+    
+    # 如果循环正常结束，也确保返回最终结果
+    yield history, ""
 
 
 def clear_chat_history():
@@ -164,6 +190,9 @@ with gr.Blocks() as demo:
                         show_label=False
                     )
                     
+                    # 在对话记录区域中添加停止按钮
+                    stop_btn = gr.Button("⏹️ 停止回答", variant="secondary")
+                    
                     status_display = gr.HTML("", elem_id="status-display")
                     gr.Markdown("""
                     <div class="footer-note">
@@ -192,6 +221,13 @@ with gr.Blocks() as demo:
         inputs=[],
         outputs=[chatbot, status_display]
     )
+    
+    # 绑定停止按钮事件，中断流式回答
+    stop_btn.click(
+        stop_chat,
+        inputs=[],
+        outputs=[]
+    )
 
 if __name__ == "__main__":
-    demo.launch(server_name="0.0.0.0", server_port=7860)
+    demo.queue(max_size=5).launch(server_name="0.0.0.0", server_port=7860)
