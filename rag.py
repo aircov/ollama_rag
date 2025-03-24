@@ -27,6 +27,7 @@ from langchain_elasticsearch import ElasticsearchRetriever
 from config import EsUrl, EsIndexName, OllamaUrl, OllamaModelName, EmbeddingDim
 from embed.corom_embeddings import CoROMEmbeddings
 from es.dsl import dsl
+from recall.serper_client import SerperClient
 from recall.web_search import google_search
 from rerank.corom_rerank import CoROMRerank
 from utils.utils import get_file_list
@@ -48,6 +49,8 @@ class RAGPipeline:
         
         # 使用自定义的本地嵌入模型
         self.embeddings = CoROMEmbeddings()
+        
+        self.search_client = SerperClient()
         
         self.rerank = CoROMRerank()
         
@@ -246,12 +249,13 @@ class RAGPipeline:
             if enable_web_search:
                 # 启用网页搜索
                 try:
-                    self.logger.info(f"开始Google搜索：{question}")
-                    online_search_results = google_search(question, 20)
-                    
+                    self.logger.info(f"开始网络搜索：{question}")
+                    # online_search_results = google_search(question, 20)
+                    online_search_results = self.search_client.search_sync(question)
+
                     web_search_docs = [
                         Document(
-                            page_content=result["description"],  # 使用 description 作为内容
+                            page_content=result["content"],  # 使用 description 作为内容
                             metadata={
                                 "source": result["url"],
                                 "title": result["title"],
@@ -260,13 +264,14 @@ class RAGPipeline:
                         ) for result in online_search_results
                     ]
                     self.logger.info(f"网页搜索数据：{len(web_search_docs)}条")
-                    
+                    self.logger.info(f"网页搜索数据详情：{online_search_results}")
+
                     return self.rerank_results(question, web_search_docs, method="", top_k=5)
-                
+
                 except Exception as e:
                     self.logger.error(f"Google搜索发生错误：{e}")
                     return []
-            
+
             else:
                 # es 文本检索 + 向量检索
                 es_search_docs = es_retriever.invoke(question)

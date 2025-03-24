@@ -56,8 +56,8 @@ def process_chat(question, history, enable_web_search, model_choice):
     history = history or []
     
     if not question.strip():
-        print("请输入问题")
-        yield history
+        history.append(("", "问题不能为空，请输入有效问题。"))
+        yield history, ""
         return
     
     # 添加用户问题到历史
