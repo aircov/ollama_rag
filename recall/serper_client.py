@@ -6,7 +6,7 @@ import json
 import aiohttp
 import httpx
 from typing import Dict, List, Any, Union, Optional
-from loguru import logger
+from extensions import logger
 
 from config import SerperApiKey
 

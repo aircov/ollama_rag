@@ -9,6 +9,8 @@ from typing import List
 from modelscope.pipelines import pipeline
 from modelscope.utils.constant import Tasks
 
+from extensions import logger
+
 
 class CoROMRerank:
     def __init__(self, model_name='damo/nlp_rom_passage-ranking_chinese-base', device='gpu'):
@@ -43,6 +45,20 @@ class CoROMRerank:
         
         # print(sorted_list)
         return sorted_list
+    
+    def rerank_documents_with_corom(self, question: str, es_search_docs: list, top_k: int) -> list:
+        """重排，使用魔塔模型"""
+        content_list = [doc.page_content for doc in es_search_docs]
+        doc_rerank = self.rerank(question, content_list)
+        for idx, score in enumerate(doc_rerank):
+            es_search_docs[idx].metadata["rerank_score"] = score['score']
+        
+        # 重新排序
+        ret = sorted(es_search_docs, key=lambda x: x.metadata.get("rerank_score"), reverse=True)
+        
+        ret = [doc for doc in ret if doc.metadata.get("rerank_score", 0) >= 0.3][:top_k]
+        logger.info(f"重排后数据：{len(ret)}条")
+        return ret
 
 
 if __name__ == '__main__':

@@ -3,14 +3,13 @@
 # @Author  : yaomw
 # @Desc    : rag全流程
 
-import logging
 from datetime import datetime
 from pathlib import Path
 
 import psutil
 import hashlib
 import os
-from typing import List
+from typing import List, Tuple
 from elasticsearch import Elasticsearch, helpers
 
 from langchain_core.documents import Document
@@ -30,13 +29,15 @@ from es.dsl import dsl
 from recall.serper_client import SerperClient
 from recall.web_search import google_search
 from rerank.corom_rerank import CoROMRerank
+from rerank.llm_rerank import LLMRerank
 from utils.utils import get_file_list
+from extensions import logger
 
 
 class RAGPipeline:
     def __init__(self, model_name: str = "deepseek-r1:14b", max_memory_gb: float = 3.0):
         self.ollama_url = OllamaUrl
-        self.setup_logging()
+        self.logger = logger
         self.check_system_memory(max_memory_gb)
         
         # 加载deepseek-r1模型
@@ -44,7 +45,7 @@ class RAGPipeline:
             base_url=self.ollama_url,  # 本地服务地址（必须显式指定）
             model=model_name,  # 本地已下载的模型名称
             temperature=0.8,  # 可选参数控制生成随机性
-            num_ctx=10000  # 增加上下文窗口
+            num_ctx=64000  # 增加上下文窗口
         )
         
         # 使用自定义的本地嵌入模型
@@ -52,7 +53,8 @@ class RAGPipeline:
         
         self.search_client = SerperClient()
         
-        self.rerank = CoROMRerank()
+        self.corom_rerank = CoROMRerank()
+        self.llm_rerank = LLMRerank(self.llm)
         
         # 配置 Elasticsearch 连接
         self.es_url = EsUrl
@@ -66,22 +68,21 @@ class RAGPipeline:
         
         # 中文版prompt
         self.prompt = ChatPromptTemplate.from_template("""
-        请根据以下上下文，结合大语言模型的知识储备，详细且有条理地回答用户的问题。
+        请根据以下上下文和对话历史，结合大语言模型的知识储备，详细且有条理地回答用户的问题。
         
         如果在提供的信息中找不到答案，或者提供的上下文与问题不相关，请基于你的知识库生成合理的答案，确保答案逻辑清晰且符合常识，
         此时不需要结合上下文判断，直接回答用户基础问题即可。不要回答上下文的内容。
         
         当前时间是：{current_time}
+        
+        对话历史（最多{max_turns}轮）：
+        {history}
 
         使用中文回答，并保持语言简洁、易懂。
 
         上下文: {context}
         问题: {question}
         回答: """)
-    
-    def setup_logging(self):
-        logging.basicConfig(level=logging.INFO)
-        self.logger = logging.getLogger(__name__)
     
     def check_system_memory(self, max_memory_gb: float):
         available_memory = psutil.virtual_memory().available / (1024 ** 3)
@@ -239,9 +240,8 @@ class RAGPipeline:
         
         return retriever
     
-    def setup_rag_chain(self, rerank_method="corom", enable_web_search=False):
+    def setup_rag_chain(self, rerank_method="corom", enable_web_search=False, max_turns=20):
         # 构建rag链
-        
         es_retriever = self.get_es_retriever()
         
         def combined_retriever(question: str) -> list:
@@ -252,7 +252,7 @@ class RAGPipeline:
                     self.logger.info(f"开始网络搜索：{question}")
                     # online_search_results = google_search(question, 20)
                     online_search_results = self.search_client.search_sync(question)
-
+                    
                     web_search_docs = [
                         Document(
                             page_content=result["content"],  # 使用 description 作为内容
@@ -265,13 +265,13 @@ class RAGPipeline:
                     ]
                     self.logger.info(f"网页搜索数据：{len(web_search_docs)}条")
                     self.logger.info(f"网页搜索数据详情：{online_search_results}")
-
+                    
                     return self.rerank_results(question, web_search_docs, method="", top_k=5)
-
+                
                 except Exception as e:
                     self.logger.error(f"Google搜索发生错误：{e}")
                     return []
-
+            
             else:
                 # es 文本检索 + 向量检索
                 es_search_docs = es_retriever.invoke(question)
@@ -280,17 +280,39 @@ class RAGPipeline:
                 # 重新排序
                 rerank_docs = self.rerank_results(question, es_search_docs, method=rerank_method, top_k=5)
                 
-                print("\n=== 多路召回再重排 ===")
-                for i, doc in enumerate(rerank_docs, 1):
-                    print(
-                        f"【文档{i} | {doc.metadata.get('source', '')} | rerank得分: {doc.metadata.get('rerank_score', 0):.4f}】\n{doc}\n{'-' * 50}")
+                # print("\n=== 多路召回再重排 ===")
+                # for i, doc in enumerate(rerank_docs, 1):
+                #     print(
+                #         f"【文档{i} | {doc.metadata.get('source', '')} | rerank得分: {doc.metadata.get('rerank_score', 0):.4f}】\n{doc}\n{'-' * 50}")
                 
                 return rerank_docs
         
-        printable_retriever = RunnableLambda(combined_retriever)
+        printable_retriever = RunnableLambda(lambda x: combined_retriever(x["question"]))
         
         def format_docs(docs):
             return "\n\n".join(doc.page_content for doc in docs)
+        
+        # 新增历史处理逻辑
+        def format_history(history: List[Tuple], max_turns: int) -> str:
+            """将历史记录格式化为文本"""
+            
+            if not history:
+                return "暂无对话历史"
+            
+            # 保留最近max_turns轮对话
+            trimmed_history = history[-max_turns:]
+            
+            history_str = []
+            for i, (user_q, ai_a) in enumerate(trimmed_history, 1):
+                history_str.append(
+                    f"第{i}轮对话：\n"
+                    f"问：{user_q}\n"
+                    f"答：{ai_a}\n"
+                )
+            
+            s = "\n".join(history_str) if history_str else "无相关对话历史"
+            self.logger.info(f"历史对话：{s}")
+            return s
         
         # rag链
         rag_chain = (
@@ -299,6 +321,8 @@ class RAGPipeline:
                     "context": printable_retriever | format_docs,  # 先检索文档再格式化
                     "question": RunnablePassthrough(),  # 直接传递原始问题
                     "current_time": RunnableLambda(lambda _: datetime.now().strftime("%Y年%m月%d日 %H:%M:%S")),
+                    "history": RunnableLambda(lambda x: format_history(x["history"], max_turns)),
+                    "max_turns": RunnableLambda(lambda _: max_turns)
                 }
                 # 步骤2：组合提示词
                 | self.prompt
@@ -310,12 +334,18 @@ class RAGPipeline:
         
         return rag_chain
     
-    def query(self, chain, question: str) -> str:
+    def query(self, chain, question: str, history: list = None) -> str:
         """执行问答"""
         memory_usage = psutil.Process(os.getpid()).memory_info().rss / 1024 / 1024
         self.logger.info(f"Memory usage: {memory_usage:.1f} MB")
+        
+        input_data = {
+            "question": question,
+            "history": history or []
+        }
+        
         # return chain.invoke(question)
-        return chain.stream(question)
+        return chain.stream(input_data)
     
     def rerank_results(self, question, docs, method="corom", top_k=5):
         """
@@ -327,75 +357,12 @@ class RAGPipeline:
         :return:
         """
         if method == "corom":
-            return self.rerank_documents_with_corom(question, docs, top_k)
+            return self.corom_rerank.rerank_documents_with_corom(question, docs, top_k)
         elif method == "llm":
-            return self.rerank_documents_with_llm(question, docs, top_k)
+            return self.llm_rerank.rerank_documents_with_llm(question, docs, top_k)
         else:
             # 使用默认方法（即不进行重排序）
             return docs
-    
-    def rerank_documents_with_corom(self, question: str, es_search_docs: list, top_k: int) -> list:
-        """重排，使用魔塔模型"""
-        content_list = [doc.page_content for doc in es_search_docs]
-        doc_rerank = self.rerank.rerank(question, content_list)
-        for idx, score in enumerate(doc_rerank):
-            es_search_docs[idx].metadata["rerank_score"] = score['score']
-        
-        # 重新排序
-        ret = sorted(es_search_docs, key=lambda x: x.metadata.get("rerank_score"), reverse=True)
-        
-        ret = [doc for doc in ret if doc.metadata.get("rerank_score", 0) >= 0.3][:top_k]
-        self.logger.info(f"重排后数据：{len(ret)}条")
-        return ret
-    
-    def rerank_documents_with_llm(self, question, docs, top_k):
-        """
-        使用LLM对检索结果进行重排序
-        :param question:
-        :param docs:
-        :param top_k:
-        :return:
-        """
-        try:
-            content_list = [doc.page_content for doc in docs]
-            prompt = f"""给定以下查询和文档片段，评估它们的相关性。
-            文档是一个列表有多个片段，你需要分析每一个片段，然后进行打分，返回每一个片段的分数，一一对应，以列表格式返回。
-            请不要解释你的评分，只返回一个列表，列表长度与文档片段数量相同，列表中的每个元素都是0-10之间的整数。
-            评分标准：0分表示完全不相关，10分表示高度相关。
-            只需返回0-10之间的整数分数，不要有任何其他解释。
-    
-            查询: {question}
-    
-            文档片段: {content_list}
-            
-            文档片段列表长度: {len(content_list)}
-    
-            相关性分数(0-10):"""
-            
-            resp = self.llm.invoke(prompt)
-            
-            llm_score = resp.split("\n\n")[-1].replace("'", "")
-            self.logger.info(f"LLM 评分：{llm_score}")
-            llm_score = eval(llm_score)
-            if len(llm_score) != len(content_list):
-                self.logger.error(f"LLM 评分长度不匹配：{len(llm_score)} != {len(content_list)}")
-                return docs[:top_k]
-            else:
-                self.logger.info(f"LLM 评分数量匹配：llm_score：{len(llm_score)} == content_list：{len(content_list)}")
-            
-            # 按照大模型打分重新排序
-            for idx, score in enumerate(llm_score):
-                docs[idx].metadata["rerank_score"] = score
-            
-            ret = sorted(docs, key=lambda x: x.metadata.get("rerank_score"), reverse=True)
-            
-            ret = [doc for doc in ret if doc.metadata.get("rerank_score", 0) >= 3][:top_k]
-            self.logger.info(f"剔除LLM评分小于3的文档，剩余文档数量：{len(ret)}")
-            return ret
-        
-        except Exception as e:
-            self.logger.error(f"llm rerank Error: {e}")
-            return docs[:top_k]
 
 
 if __name__ == '__main__':
@@ -403,10 +370,16 @@ if __name__ == '__main__':
     rag = RAGPipeline(model_name=OllamaModelName, max_memory_gb=3.0)
     rag.load_and_split_documents("./data/")
     
-    chain = rag.setup_rag_chain("corom", enable_web_search=True)
+    chain = rag.setup_rag_chain("corom", enable_web_search=False)
+    
+    # 模拟多轮对话
+    conversation_history = []
     
     while True:
         question = input("请输入问题：")
+        full_answer = ""
+        conversation_history.append((question, ""))  # 新增一轮对话，初始回答为空
+        
         if question == "exit":
             break
         
@@ -414,5 +387,9 @@ if __name__ == '__main__':
         # question = "盗龄医生?"
         # question = "解方程 (x²-5x+6=0)。"
         print(f"Question: {question}\nAnswer: ", end='', flush=True)
-        for chunk in rag.query(chain, question):
+        for chunk in rag.query(chain, question, history=conversation_history):
             print(chunk, end="", flush=True)
+            full_answer += chunk
+            
+        conversation_history[-1] = (question, full_answer)
+            

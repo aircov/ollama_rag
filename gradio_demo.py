@@ -11,6 +11,7 @@ from utils.ollama_utils import fetch_ollama_models
 from utils.utils import get_file_list
 
 from config import OllamaModelName
+from extensions import logger
 
 rag = RAGPipeline(OllamaModelName)
 
@@ -45,9 +46,17 @@ def process_upload_files(files):
 
 
 def process_chat(question, history, enable_web_search, model_choice):
+    """
+    :param question:
+    :param history: 对话历史列表，格式 [(用户问题1, AI回答1), (用户问题2, AI回答2), ...]
+    :param enable_web_search:
+    :param model_choice:
+    :return:
+    """
+    
     # 初始化历史记录
     
-    print(
+    logger.info(
         f"\nrag问答参数:\n question:{question}, history:{history}, 联网搜索:{enable_web_search}, 模型选择:{model_choice}")
     
     global stop_flag
@@ -74,17 +83,20 @@ def process_chat(question, history, enable_web_search, model_choice):
     thinking_mode = False  # 是否处于思考过程
     
     think_time = time.time()
-    
+    input_data = {
+        "question": question,
+        "history": history or []
+    }
     # 流式获取回答
-    for chunk in chain.stream(question):
+    for chunk in chain.stream(input_data):
         
         print(chunk, end="", flush=True)
-        
+    
         if stop_flag:  # 检查是否点击了停止按钮
             full_answer += "\n\n回答已中断"
             history[-1] = (question, full_answer)
             yield history, ""
-            return  # 中断后直接结束
+            break  # 中断后直接结束
         
         full_answer += chunk
         
@@ -162,7 +174,7 @@ with gr.Blocks() as demo:
                             web_search_checkbox = gr.Checkbox(
                                 label="启用联网搜索",
                                 value=False,
-                                info="打开后将同时搜索网络内容（需要VPN）"
+                                info="打开后将同时搜索网络内容"
                             )
                             
                             # 添加模型选择下拉框
@@ -170,7 +182,7 @@ with gr.Blocks() as demo:
                                 choices=fetch_ollama_models(),
                                 value="deepseek-r1:14b",
                                 label="模型选择",
-                                info="选择使用本地模型或云端模型"
+                                info="选择使用本地模型"
                             )
                         
                         with gr.Row():
@@ -230,4 +242,4 @@ with gr.Blocks() as demo:
     )
 
 if __name__ == "__main__":
-    demo.queue(max_size=5).launch(server_name="0.0.0.0", server_port=7860)
+    demo.launch(server_name="0.0.0.0", server_port=7860)
