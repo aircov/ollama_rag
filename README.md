@@ -137,5 +137,5 @@ windows：`elasticsearch.bat`、`kibana.bat`
 
 ## 4、gradio界面
 
-`python3 gradio_demo.py`
+`python3 web_ui.py`
 ![img.png](images/img_gradio_demo1.png)
