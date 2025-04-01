@@ -4,7 +4,7 @@
 # @Desc    :
 
 
-def get_file_list(es, index_name):
+async def get_file_list(es, index_name):
     dsl = {
         "size": 0,
         "aggs": {
@@ -17,7 +17,7 @@ def get_file_list(es, index_name):
         }
     }
     
-    resp = es.search(index=index_name, body=dsl)
+    resp = await es.search(index=index_name, body=dsl)
     sources = [bucket for bucket in resp['aggregations']['unique_sources']['buckets']]
 
     return sources

@@ -10,7 +10,8 @@ import os
 import hashlib
 from typing import List, Tuple, AsyncGenerator
 
-from elasticsearch import Elasticsearch, helpers
+from elasticsearch import AsyncElasticsearch, helpers
+from langchain_elasticsearch import AsyncElasticsearchRetriever
 from langchain_core.documents import Document
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_community.document_loaders import TextLoader, PyPDFLoader
@@ -61,7 +62,7 @@ class AsyncRAGPipeline:
         
         # 配置 Elasticsearch 连接
         self.es_url = EsUrl
-        self.es_client = Elasticsearch(self.es_url)
+        self.es_client = AsyncElasticsearch(self.es_url)
         if not self.es_client.ping():
             self.logger.error("无法连接到 Elasticsearch 实例")
         else:
@@ -87,7 +88,7 @@ class AsyncRAGPipeline:
         问题: {question}
         回答: """)
     
-    def load_and_split_documents(self, file_path="", files=None):
+    async def load_and_split_documents(self, file_path="", files=None):
         """加载并拆分文档片段"""
         data = []
         if file_path:
@@ -147,8 +148,8 @@ class AsyncRAGPipeline:
         )
         splits = text_splitter.split_documents(data)
         self.logger.info(f"Created {len(splits)} document chunks")
-        self.update_es_index(splits)
-        file_list = get_file_list(self.es_client, self.es_index_name)
+        await self.update_es_index(splits)
+        file_list = await get_file_list(self.es_client, self.es_index_name)
         self.logger.info(f"已索引文件列表：{file_list}")
         return file_list
     
@@ -158,9 +159,10 @@ class AsyncRAGPipeline:
             doc.metadata["source"] = filename
         return docs
     
-    def update_es_index(self, documents: List[Document]):
+    async def update_es_index(self, documents: List[Document]):
         """将文档插入到 Elasticsearch 中"""
-        self.es_client.indices.create(index=self.es_index_name, body=dsl["create_index"], ignore=400)
+        await self.es_client.indices.create(index=self.es_index_name, body=dsl["create_index"], ignore=400)
+        
         actions = [
             {
                 "_index": self.es_index_name,
@@ -173,20 +175,31 @@ class AsyncRAGPipeline:
             }
             for doc in documents
         ]
-        helpers.bulk(self.es_client, actions, chunk_size=200)
-        self.es_client.indices.refresh(index=self.es_index_name)
-        result = self.es_client.count(index=self.es_index_name)
-        self.logger.info(f"ES索引 {self.es_index_name} 中有 {result['count']} 条记录")
+        success, failed = await helpers.async_bulk(self.es_client, actions, chunk_size=200)
+        
+        await self.es_client.indices.refresh(index=self.es_index_name)
+        result = await self.es_client.count(index=self.es_index_name)
+        self.logger.info(
+            f"ES异步写入完成 | 成功: {success} 失败: {failed} "
+            f"总文档数: {result['count']}"
+        )
     
     async def async_es_retrieve(self, question: str) -> list:
         """异步执行 Elasticsearch 检索"""
-        loop = asyncio.get_event_loop()
-        
-        def _sync_retrieve():
+        try:
+            from langchain_core.callbacks import AsyncCallbackManagerForRetrieverRun
+            # 获取异步检索器
             retriever = self.get_es_retriever()
-            return retriever.invoke(question)
-        
-        return await loop.run_in_executor(None, _sync_retrieve)
+            
+            # 直接调用异步API
+            run_manager = AsyncCallbackManagerForRetrieverRun.get_noop_manager()  # 创建默认管理器
+            docs = await retriever._aget_relevant_documents(question, run_manager=run_manager)
+            
+            self.logger.debug(f"异步检索完成，获得 {len(docs)} 条结果")
+            return docs
+        except Exception as e:
+            self.logger.error(f"ES异步检索失败: {str(e)}")
+            return []
     
     def get_es_retriever(self):
         """构建 Elasticsearch 检索器"""
@@ -212,8 +225,7 @@ class AsyncRAGPipeline:
                 "size": 20
             }
         
-        from langchain_elasticsearch import ElasticsearchRetriever  # 局部导入
-        retriever = ElasticsearchRetriever(
+        retriever = AsyncElasticsearchRetriever(
             es_client=self.es_client,
             index_name=self.es_index_name,
             content_field="content",
@@ -305,7 +317,7 @@ class AsyncRAGPipeline:
 async def main():
     pipeline = AsyncRAGPipeline()
     # 加载和拆分文档（同步方法在独立线程中调用）
-    await asyncio.to_thread(pipeline.load_and_split_documents, "./data/", None)
+    await pipeline.load_and_split_documents("./data/", None)
     
     # 模拟并发请求
     async def concurrent_query(query, history):
@@ -324,7 +336,7 @@ async def main():
 async def chat_with_history():
     pipeline = AsyncRAGPipeline()
     # 加载和拆分文档（同步方法在独立线程中调用）
-    await asyncio.to_thread(pipeline.load_and_split_documents, "./data/", None)
+    await pipeline.load_and_split_documents("./data/", None)
     
     conversation_history = []
     while True:
@@ -335,11 +347,11 @@ async def chat_with_history():
         
         full_answer = ""
         conversation_history.append((question, ""))
-
+        
         async for chunk in pipeline.generate_answer(question, conversation_history, model_name=OllamaModelName):
             print(chunk, end="", flush=True)
             full_answer += chunk
-    
+        
         conversation_history[-1] = (question, full_answer)
 
 

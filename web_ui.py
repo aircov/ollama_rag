@@ -16,16 +16,16 @@ from extensions import logger
 rag = AsyncRAGPipeline()
 
 
-def process_upload_files(files):
+async def process_upload_files(files):
     if not files:
         # 获取es中的文件列表
-        file_list = get_file_list(rag.es_client, rag.es_index_name)
+        file_list = await get_file_list(rag.es_client, rag.es_index_name)
         
         # 已处理文件
         ret = [f"文件名: 《{i['key']}》，分块数量：{i['doc_count']}" for i in file_list]
         return "请选择要上传的文件", "\n".join(ret)
     
-    file_list = rag.load_and_split_documents(files=files)
+    file_list = await rag.load_and_split_documents(files=files)
     
     summary = f"\n总计处理 {len(files)} 个文件，处理完成"
     
