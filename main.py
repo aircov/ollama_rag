@@ -7,8 +7,10 @@ import numpy as np
 
 from ollama import Client
 
+from config import OllamaModelName
+
 client = Client(
-    host='http://192.168.10.195:11434',
+    host='http://127.0.0.1:11434',
     headers={'Content-Type': "application/json", "Authorization": "Bearer ollama"}
 )
 models = client.list()
@@ -17,7 +19,7 @@ print([model.model for model in models.models])
 
 # embed
 resp = client.embed(
-    model='deepseek-r1:14b',
+    model=OllamaModelName,
     input=['深度学习的基本原理', '神经网络的核心概念'],
 )
 print(resp.embeddings[0][:10])
@@ -37,9 +39,9 @@ print(f"dot product Similarity: {dot_product}")
 
 
 stream = client.chat(
-    model='deepseek-r1:14b',
+    model=OllamaModelName,
     messages=[
-        {"role": "system", "content": """You are a helpful assistant."""},
+        {"role": "system", "content": """You are a helpful assistant. 请用中文回答下面问题"""},
         {'role': 'user', 'content': '解方程 (x²-5x+6=0)。'},
     
     ],
